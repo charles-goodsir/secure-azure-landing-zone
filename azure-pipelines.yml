@@ -1,0 +1,6 @@
+# TODO: build out the ADO pipeline stages:
+#   1. Validate  — terraform fmt -check, terraform validate
+#   2. Security scan — tfsec or Checkov against terraform/
+#   3. Plan — terraform plan, publish as a pipeline artifact
+#   4. Manual approval gate — ADO environment approval
+#   5. Apply — terraform apply, using the Service Connection

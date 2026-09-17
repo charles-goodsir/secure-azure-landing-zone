@@ -19,3 +19,6 @@ stages:
         sudo mv terraform /usr/local/bin/
         terraform -version
       displayName: 'Install Terraform'
+    - script: terraform fmt -check -diff
+      displayName: 'Terraform Format Check'
+      workingDirectory: terraform

@@ -12,8 +12,9 @@ stages:
     displayName: 'terraform fmt & validate'
     steps:
     - script: |
+        rm -rf terraform terraform.zip
         TF_VERSION=1.9.8
-        curl -o terraform.zip https://releases.hashicorp.com/terraform/$(TF_VERSION)/terraform_$(TF_VERSION)_linux_amd64.zip
+        curl -o terraform.zip https://releases.hashicorp.com/terraform/${TF_VERSION}/terraform_${TF_VERSION}_linux_amd64.zip
         unzip -o terraform.zip
         sudo mv terraform /usr/local/bin/
         terraform -version

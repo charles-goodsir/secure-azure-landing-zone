@@ -1,6 +1,20 @@
-# TODO: build out the ADO pipeline stages:
-#   1. Validate  — terraform fmt -check, terraform validate
-#   2. Security scan — tfsec or Checkov against terraform/
-#   3. Plan — terraform plan, publish as a pipeline artifact
-#   4. Manual approval gate — ADO environment approval
-#   5. Apply — terraform apply, using the Service Connection
+trigger:
+- main
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+stages:
+- stage: Validate
+  displayName: 'Validate Terraform'
+  jobs:
+  - job: TerraformValidate
+    displayName: 'terraform fmt & validate'
+    steps:
+    - script: |
+        TF_VERSION=1.9.8
+        curl -o terraform.zip https://releases.hashicorp.com/terraform/$(TF_VERSION)/terraform_$(TF_VERSION)_linux_amd64.zip
+        unzip terraform.zip
+        sudo mv terraform /usr/local/bin/
+        terraform -version
+      displayName: 'Install Terraform'

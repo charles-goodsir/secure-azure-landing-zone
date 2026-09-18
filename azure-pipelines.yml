@@ -24,3 +24,9 @@ stages:
     - script: terraform fmt -check -diff
       displayName: 'Terraform Format Check'
       workingDirectory: terraform
+    - script: terraform init -backend=false
+      displayName: 'Terraform Init'
+      workingDirectory: terraform
+    - script: terraform validate
+      displayName: 'Terraform Validate'
+      workingDirectory: terraform

@@ -17,6 +17,7 @@ stages:
         curl -o terraform.zip https://releases.hashicorp.com/terraform/${TF_VERSION}/terraform_${TF_VERSION}_linux_amd64.zip
         unzip -o terraform.zip
         sudo mv terraform /usr/local/bin/
+        cd ..
         terraform -version
       displayName: 'Install Terraform'
     - script: terraform fmt -check -diff

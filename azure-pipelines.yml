@@ -30,3 +30,14 @@ stages:
     - script: terraform validate
       displayName: 'Terraform Validate'
       workingDirectory: terraform
+- stage: SecurityScan
+  displayName: 'Security Scan'
+  dependsOn: Validate
+  jobs:
+  - job: TfsecScan
+    displayName: 'Security Scan'
+    steps:
+    - script: |
+        curl -s https://raw.githubusercontent.com/aquasecurity/tfsec/master/scripts/install_linux.sh | bash
+        tfsec terraform/
+      displayName: 'Run tfsec'

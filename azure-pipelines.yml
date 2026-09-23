@@ -38,6 +38,9 @@ stages:
     displayName: 'Security Scan'
     steps:
     - script: |
+        # ponytail: curl|bash with no version pin or checksum, trusts the install
+        # script's content at run time. Fine for a personal project; pin an exact
+        # tfsec release + verify a checksum before using this in production.
         curl -s https://raw.githubusercontent.com/aquasecurity/tfsec/master/scripts/install_linux.sh | bash
         tfsec terraform/
       displayName: 'Run tfsec'
@@ -54,12 +57,20 @@ stages:
         azureSubscription: 'azure-landing-zone-connection'
         scriptType: bash
         scriptLocation: inlineScript
+        addSpnToEnvironment: true
         inlineScript: |
           mkdir -p tf-install && cd tf-install
           curl -o terraform.zip https://releases.hashicorp.com/terraform/1.9.8/terraform_1.9.8_linux_amd64.zip
           unzip -o terraform.zip
           sudo mv terraform /usr/local/bin/
           cd ../terraform
+
+          export ARM_CLIENT_ID=$servicePrincipalId
+          export ARM_TENANT_ID=$tenantId
+          export ARM_SUBSCRIPTION_ID=$(az account show --query id -o tsv)
+          export ARM_USE_OIDC=true
+          export ARM_OIDC_TOKEN=$idToken
+
           terraform init \
             -backend-config="resource_group_name=rg-tfstate" \
             -backend-config="storage_account_name=tfstatecg21836" \

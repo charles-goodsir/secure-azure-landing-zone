@@ -41,3 +41,31 @@ stages:
         curl -s https://raw.githubusercontent.com/aquasecurity/tfsec/master/scripts/install_linux.sh | bash
         tfsec terraform/
       displayName: 'Run tfsec'
+- stage: Plan
+  displayName: 'Terraform Plan'
+  dependsOn: 'SecurityScan'
+  jobs:
+  - job: TerraformPlan
+    displayName: 'terraform plan'
+    steps:
+    - task: AzureCLI@2
+      displayName: 'Terraform Init & Plan'
+      inputs:
+        azureSubscription: 'azure-landing-zone-connection'
+        scriptType: bash
+        scriptLocation: inlineScript
+        inlineScript: |
+          mkdir -p tf-install && cd tf-install
+          curl -o terraform.zip https://releases.hashicorp.com/terraform/1.9.8/terraform_1.9.8_linux_amd64.zip
+          unzip -o terraform.zip
+          sudo mv terraform /usr/local/bin/
+          cd ../terraform
+          terraform init \
+            -backend-config="resource_group_name=rg-tfstate" \
+            -backend-config="storage_account_name=tfstatecg21836" \
+            -backend-config="container_name=tfstate" \
+            -backend-config="key=landingzone.tfstate"
+          terraform plan -out=tfplan
+    - publish: terraform/tfplan
+      artifact: tfplan
+

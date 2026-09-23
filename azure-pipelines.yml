@@ -64,7 +64,8 @@ stages:
             -backend-config="resource_group_name=rg-tfstate" \
             -backend-config="storage_account_name=tfstatecg21836" \
             -backend-config="container_name=tfstate" \
-            -backend-config="key=landingzone.tfstate"
+            -backend-config="key=landingzone.tfstate" \
+            -backend-config="use_azuread_auth=true"
           terraform plan -out=tfplan
     - publish: terraform/tfplan
       artifact: tfplan

@@ -79,6 +79,8 @@ The stage signs in through the service connection, connects to the remote backen
 ### 4. Manual approval
 I made Apply a `deployment` job that targets an ADO environment called `production`. That environment has an approval check, so the pipeline pauses until I approve.
 
+![Apply stage waiting for approval on the production environment](screenshots/SALZ14.webp)
+
 ### 5. Apply
 The stage checks out the repo, downloads the `tfplan` artifact and runs `terraform apply` against it.
 

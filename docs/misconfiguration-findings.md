@@ -168,7 +168,7 @@ Azure can't switch this on for an existing account, so the plan showed a replace
 
 ### Finding 5: No storage logging (MEDIUM, AZU-0057), accepted
 
-**Why I accepted it:** the check looks for Storage Analytics logging, which Terraform only exposes for queues. This account has no queues, so turning it on would pass the scan and log nothing useful. The real control is diagnostic settings that send storage logs to a Log Analytics workspace. That's on my roadmap, and I'll remove this ignore when it lands.
+**Why I accepted it:** the check looks for Storage Analytics logging, which Terraform only exposes for queues. This account has no queues, so turning it on would pass the scan and log nothing useful. The real control is diagnostic settings that send storage logs to a Log Analytics workspace. That's on my roadmap. I gave this ignore an expiry date of 31 Dec 2026, so Trivy fails the pipeline again after that date unless I've built the fix or renewed the acceptance.
 
 ### Finding 6: No geo-redundant replication (LOW, AZU-0058), accepted
 
@@ -182,11 +182,13 @@ I put Trivy ignore comments on the resource, with the reasons on the lines above
 # AZU-0058: LRS is enough for a PoC holding no data; GRS doubles the cost for durability, not security.
 # AZU-0057: needs diagnostic settings to Log Analytics (roadmap item 6); queue-only analytics logging would log nothing.
 #trivy:ignore:AZU-0058
-#trivy:ignore:AZU-0057
+#trivy:ignore:AZU-0057[exp:2026-12-31]
 resource "azurerm_storage_account" "main" {
 ```
 
 A reviewer reading `main.tf` sees the decision and the reason in the same place. A bare ignore with no reason looks the same as someone hiding a problem.
+
+AZU-0057 carries an expiry date because I plan to fix it. AZU-0058 has none, because LRS is a standing decision for this project.
 
 ### After
 

@@ -14,19 +14,19 @@ I defined a small Azure environment in Terraform and deploy it through an Azure 
 - **Infrastructure as Code:** Terraform defines each Azure resource. I don't create anything by clicking in the Portal.
 - **Shift-left security:** Trivy runs before `plan`. An insecure config fails the pipeline while it's still code.
 - **Supply-chain checks:** the pipeline downloads a pinned Trivy release and verifies its SHA-256 checksum before running it. A committed `.terraform.lock.hcl` pins the azurerm provider version and hashes, and each `terraform init` runs with `-lockfile=readonly`, so a provider that doesn't match fails the pipeline.
-- **Change control:** the Plan stage publishes the saved plan as an artifact. A manual approval gate sits in front of `apply`, and Apply runs the plan I approved without re-planning.
+- **Change control:** a GitHub ruleset blocks direct pushes to `main`, so each change arrives through a pull request that has passed the pipeline. The Plan stage publishes the saved plan as an artifact, a manual approval gate sits in front of `apply`, and Apply runs the plan I approved without re-planning.
 - **No stored secrets:** the pipeline signs in to Azure with workload identity federation (OIDC), so I have no client secret to leak.
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-    GH[GitHub repo<br/>push to main] --> V
+    GH[GitHub repo<br/>PR or merge to main] --> V
 
     subgraph ADO[Azure DevOps pipeline]
         V[1. Validate<br/>fmt · init · validate] --> S[2. Security Scan<br/>Trivy]
         S --> P[3. Plan<br/>tfplan artifact]
-        P --> A{4. Manual<br/>approval}
+        P -- main only --> A{4. Manual<br/>approval}
         A --> AP[5. Apply<br/>saved plan]
     end
 
@@ -60,7 +60,18 @@ Terraform keeps its state in a separate resource group, `rg-tfstate`. I created 
 
 ## The pipeline
 
-[`azure-pipelines.yml`](../azure-pipelines.yml) defines the pipeline. Each push to `main` starts a run.
+[`azure-pipelines.yml`](../azure-pipelines.yml) defines the pipeline. It runs in two situations:
+
+- **A pull request into `main`** runs Validate, Security Scan and Plan. Apply shows as skipped, so the PR tells me what would change without changing anything.
+- **A merge into `main`** runs all five stages and deploys after I approve. Merges that only touch `docs/` skip this run, since they change no infrastructure. PRs still run on docs changes, because the ruleset needs the pipeline check to report before it allows a merge.
+
+### Pull requests and branch protection
+A GitHub ruleset on `main` requires a pull request, requires the Azure Pipelines check to pass, blocks force pushes and allows no bypass, including for me as the repo admin. The pipeline's own controls (the lock file, readonly init, the Trivy checksum and the `#trivy:ignore` comments) live in files a direct push could change, so the ruleset is what keeps them in place.
+
+Two settings keep a PR from deploying or misusing credentials:
+
+- The Apply stage has `condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'))`. ADO sets `Build.Reason` to `PullRequest` on PR runs, so Apply skips them.
+- I turned off PR builds from forks in ADO. The repo is public, and a fork's PR would otherwise run the fork's version of the pipeline YAML with my service connection.
 
 ### 1. Validate
 The stage installs Terraform 1.9.8 and runs `terraform fmt -check`, `terraform init -backend=false` and `terraform validate`. It catches mistakes in seconds and needs no Azure credentials.
@@ -107,6 +118,7 @@ Most stages failed at least once before they worked.
 | `Authenticating using the Azure CLI is only supported as a User` | `AzureCLI@2` signs in the `az` CLI, but Terraform's azurerm backend handles its own sign-in and rejects CLI sign-in for a service principal | I set `addSpnToEnvironment: true` and exported `ARM_CLIENT_ID`, `ARM_TENANT_ID`, `ARM_SUBSCRIPTION_ID`, `ARM_USE_OIDC` and `ARM_OIDC_TOKEN` |
 | Apply found no Terraform config | A `deployment` job skips the repo checkout that a regular `job` does | I added `- checkout: self`, ran from `$(Build.SourcesDirectory)/terraform` and pointed `apply` at `$(Pipeline.Workspace)/tfplan/tfplan` |
 | The Trivy checksum check blocked nothing | Bash keeps running after a failed command, so a tampered download would print `FAILED` and then install and run anyway | I added `set -euo pipefail` as the script's first line |
+| Apply condition that would have passed on PRs | I wrote `variables['Build Reason']` with a space instead of a dot. The lookup returns an empty string, which never equals `'PullRequest'`, so the condition stays true and Apply would run on every PR | I corrected it to `Build.Reason` and confirmed Apply shows as skipped on a PR run |
 | `StorageAccountAlreadyTaken` during Apply | Enabling infrastructure encryption forces a replace. Terraform deleted the account and asked for the same globally unique name 6 seconds later, before Azure had released it | The account held no data, so I renamed it and ran a fresh plan. On a real account I'd plan this change as a migration |
 
 The first problem, with the install step stuck on the prompt:
@@ -121,9 +133,11 @@ The same step after the fix:
 
 I left these in on purpose:
 
-- **Two accepted Trivy findings:** GRS replication and storage analytics logging. [misconfiguration-findings.md](misconfiguration-findings.md) gives the reason for each.
+- **Two accepted Trivy findings:** GRS replication and storage analytics logging. [misconfiguration-findings.md](misconfiguration-findings.md) gives the reason for each. The logging acceptance expires on 31 Dec 2026, after which Trivy fails the pipeline again.
+- **No second reviewer:** the ruleset requires 0 approvals, because GitHub won't let me approve my own PR. The passing pipeline check acts as the reviewer. A team repo would require at least one approval from someone other than the author.
+- **Unpinned Trivy rules:** the Trivy binary is pinned, but it downloads its checks bundle fresh on each run. The same code can pass one day and fail the next. I accept that so new rules reach me without a pipeline change.
+- **Trust on first download:** the lock file proves the provider hasn't changed since I locked it. Terraform checked HashiCorp's signature on that first download, but the hashes record what the registry served that day.
 - **Checksums from the same source:** the Trivy checksum file comes from the same GitHub release as the binary. It catches a corrupted or swapped download, but an attacker who controls the release could replace both files. Verifying Trivy's cosign signature would close that gap.
 - **Unverified Terraform downloads:** the Terraform installs are pinned to 1.9.8 but skip checksum verification.
 - **Hardcoded values:** I wrote names and the region straight into `main.tf` instead of using variables.
-- **Direct commits to `main`:** the pipeline has no pull-request validation or branch protection yet.
 - **No private endpoints:** with public access disabled and no private endpoint, only Azure's trusted services can reach the storage account and Key Vault.

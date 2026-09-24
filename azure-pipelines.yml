@@ -24,7 +24,7 @@ stages:
           - script: terraform fmt -check -diff
             displayName: "Terraform Format Check"
             workingDirectory: terraform
-          - script: terraform init -backend=false
+          - script: terraform init -backend=false -lockfile=readonly
             displayName: "Terraform Init"
             workingDirectory: terraform
           - script: terraform validate
@@ -34,8 +34,8 @@ stages:
     displayName: "Security Scan"
     dependsOn: Validate
     jobs:
-      - job: TfsecScan
-        displayName: "Security Scan"
+      - job: TrivyScan
+        displayName: "Trivy scan"
         steps:
           - script: |
               set -euo pipefail
@@ -82,7 +82,8 @@ stages:
                   -backend-config="storage_account_name=tfstatecg21836" \
                   -backend-config="container_name=tfstate" \
                   -backend-config="key=landingzone.tfstate" \
-                  -backend-config="use_azuread_auth=true"
+                  -backend-config="use_azuread_auth=true" \
+                  -lockfile=readonly
                 terraform plan -out=tfplan
           - publish: terraform/tfplan
             artifact: tfplan
@@ -123,6 +124,7 @@ stages:
                         -backend-config="storage_account_name=tfstatecg21836" \
                         -backend-config="container_name=tfstate" \
                         -backend-config="key=landingzone.tfstate" \
-                        -backend-config="use_azuread_auth=true"
+                        -backend-config="use_azuread_auth=true" \
+                        -lockfile=readonly
 
                       terraform apply -auto-approve $(Pipeline.Workspace)/tfplan/tfplan

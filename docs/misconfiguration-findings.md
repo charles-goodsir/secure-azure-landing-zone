@@ -1,17 +1,23 @@
 # Misconfiguration Findings
 
-The pipeline's tfsec scan flagged two problems in my Key Vault config. This page shows each one before and after I fixed it.
+The pipeline's security scan blocked two deployments. In round 1, tfsec flagged my Key Vault. In round 2, I switched scanners, and Trivy flagged the storage account that tfsec had passed. This page shows each finding before and after, including the two I accepted instead of fixing.
 
-I didn't plant these findings. They came from the first Key Vault config I wrote. I had set `public_network_access_enabled = false` and assumed that locked the vault down, and tfsec disagreed.
+I didn't plant any of these. They came from configs I wrote. Both times I had set `public_network_access_enabled = false` and assumed that locked the resource down, and the scanner disagreed.
 
 ## Summary
 
-| # | Severity | tfsec ID | Resource | Status |
-|---|---|---|---|---|
-| 1 | CRITICAL | `azure-keyvault-specify-network-acl` | `azurerm_key_vault.main` | Fixed |
-| 2 | MEDIUM | `azure-keyvault-no-purge` | `azurerm_key_vault.main` | Fixed |
+| # | Scanner | Severity | ID | Resource | Status |
+|---|---|---|---|---|---|
+| 1 | tfsec | CRITICAL | `azure-keyvault-specify-network-acl` | `azurerm_key_vault.main` | Fixed |
+| 2 | tfsec | MEDIUM | `azure-keyvault-no-purge` | `azurerm_key_vault.main` | Fixed |
+| 3 | Trivy | CRITICAL | `AZU-0012` | `azurerm_storage_account.main` | Fixed |
+| 4 | Trivy | MEDIUM | `AZU-0061` | `azurerm_storage_account.main` | Fixed |
+| 5 | Trivy | MEDIUM | `AZU-0057` | `azurerm_storage_account.main` | Accepted |
+| 6 | Trivy | LOW | `AZU-0058` | `azurerm_storage_account.main` | Accepted |
 
-## Before
+## Round 1: tfsec and the Key Vault
+
+### Before
 
 ```hcl
 resource "azurerm_key_vault" "main" {
@@ -48,7 +54,7 @@ Resolution Enable purge protection for key vaults
 
 tfsec exited with code 1 and failed the Security Scan stage. Plan and Apply never ran, and Azure received nothing.
 
-## Finding 1: No network ACL (CRITICAL)
+### Finding 1: No network ACL (CRITICAL)
 
 **Risk:** the Key Vault holds secrets, keys and certificates. My config relied on the public-access flag alone and set no default network rule. If I or someone else re-enabled public access to debug something, no other control would block traffic. A secrets vault needs a stated deny rule.
 
@@ -63,7 +69,7 @@ tfsec exited with code 1 and failed the Security Scan stage. Plan and Apply neve
 
 `default_action = "Deny"` blocks traffic I haven't allowed. `bypass = "AzureServices"` lets trusted Azure platform services through, since some Azure integrations break without it. The rule mirrors the deny-by-default NSG on the subnet.
 
-## Finding 2: Soft-delete retention not set (MEDIUM)
+### Finding 2: Soft-delete retention not set (MEDIUM)
 
 **Risk:** purge protection depends on soft delete. Soft delete keeps a deleted secret recoverable for a retention period, and purge protection stops anyone from purging it for good before that period ends. My config left the retention period to the provider default, so a reviewer reading the code couldn't see it.
 
@@ -75,7 +81,7 @@ tfsec exited with code 1 and failed the Security Scan stage. Plan and Apply neve
 
 Azure allows a minimum of 7 days. For production I'd pick something closer to 90.
 
-## After
+### After
 
 ```hcl
 resource "azurerm_key_vault" "main" {
@@ -100,8 +106,113 @@ With both fixes in, tfsec passed and the pipeline ran through to Apply:
 
 ![Full pipeline passing after remediation](screenshots/SALZ12.webp)
 
+## Round 2: Trivy and the storage account
+
+I replaced tfsec with Trivy v0.74.0, since tfsec's own logs announced it was moving into Trivy. Trivy's first scan failed on the storage account, which tfsec had passed. Trivy carries a newer rule set, and a scanner that no longer gets updates misses what the newer rules catch.
+
+### Before
+
+```hcl
+resource "azurerm_storage_account" "main" {
+  name                          = "salzstcg314214"
+  resource_group_name           = azurerm_resource_group.main.name
+  location                      = azurerm_resource_group.main.location
+  account_tier                  = "Standard"
+  account_replication_type      = "LRS"
+  min_tls_version               = "TLS1_2"
+  https_traffic_only_enabled    = true
+  public_network_access_enabled = false
+}
+```
+
+Scanner output (pipeline run, 24 Sep 2026, trimmed):
+
+```
+Tests: 4 (SUCCESSES: 0, FAILURES: 4)
+Failures: 4 (UNKNOWN: 0, LOW: 1, MEDIUM: 2, HIGH: 0, CRITICAL: 1)
+
+AZU-0012 (CRITICAL): No network rules defined and default action allows access.
+AZU-0057 (MEDIUM): Storage account does not have logging enabled for any service.
+AZU-0058 (LOW): Storage account does not use geo-redundant replication.
+AZU-0061 (MEDIUM): Storage account does not have infrastructure encryption enabled.
+
+##[error]Bash exited with code '1'.
+```
+
+### Finding 3: No network rules (CRITICAL, AZU-0012)
+
+**Risk:** the same gap as finding 1, on a different resource. Without network rules, the storage account's default network action allows access, and the public-access flag stands as the only control.
+
+**Fix:**
+
+```hcl
+  network_rules {
+    default_action = "Deny"
+    bypass         = ["AzureServices"]
+  }
+```
+
+`bypass` takes a list here and a string on the Key Vault. The two resources come from different Azure APIs, so copying the Key Vault block across fails `terraform validate`.
+
+### Finding 4: No infrastructure encryption (MEDIUM, AZU-0061)
+
+**Risk:** Azure encrypts storage at rest with one layer by default. Infrastructure encryption adds a second layer with a different algorithm and key, so a flaw in one layer doesn't expose the data.
+
+**Fix:**
+
+```hcl
+  infrastructure_encryption_enabled = true
+```
+
+Azure can't switch this on for an existing account, so the plan showed a replace (`-/+`). Terraform deleted the account and tried to create the new one 6 seconds later. Azure rejected the create with `StorageAccountAlreadyTaken`, because it hadn't released the globally unique name yet. The account held no data, so I renamed it to `salzstcg314215` and ran a fresh plan. On an account holding data, I'd plan this change as a migration.
+
+### Finding 5: No storage logging (MEDIUM, AZU-0057), accepted
+
+**Why I accepted it:** the check looks for Storage Analytics logging, which Terraform only exposes for queues. This account has no queues, so turning it on would pass the scan and log nothing useful. The real control is diagnostic settings that send storage logs to a Log Analytics workspace. That's on my roadmap, and I'll remove this ignore when it lands.
+
+### Finding 6: No geo-redundant replication (LOW, AZU-0058), accepted
+
+**Why I accepted it:** GRS copies data to a second region to survive a regional outage. That's a durability and cost decision, not a security control, and GRS costs about twice as much as LRS. This proof of concept holds no data.
+
+### How I recorded the acceptances
+
+I put Trivy ignore comments on the resource, with the reasons on the lines above them:
+
+```hcl
+# AZU-0058: LRS is enough for a PoC holding no data; GRS doubles the cost for durability, not security.
+# AZU-0057: needs diagnostic settings to Log Analytics (roadmap item 6); queue-only analytics logging would log nothing.
+#trivy:ignore:AZU-0058
+#trivy:ignore:AZU-0057
+resource "azurerm_storage_account" "main" {
+```
+
+A reviewer reading `main.tf` sees the decision and the reason in the same place. A bare ignore with no reason looks the same as someone hiding a problem.
+
+### After
+
+```hcl
+resource "azurerm_storage_account" "main" {
+  name                              = "salzstcg314215"
+  resource_group_name               = azurerm_resource_group.main.name
+  location                          = azurerm_resource_group.main.location
+  account_tier                      = "Standard"
+  account_replication_type          = "LRS"
+  min_tls_version                   = "TLS1_2"
+  https_traffic_only_enabled        = true
+  public_network_access_enabled     = false
+  infrastructure_encryption_enabled = true
+
+  network_rules {
+    default_action = "Deny"
+    bypass         = ["AzureServices"]
+  }
+}
+```
+
 ## What I took from it
 
-- The public-access flag covered one setting, and tfsec checks several. My config has to state each one.
-- The gate did its job. It stopped my insecure config in CI, and I fixed the code rather than suppressing the check.
+- A single public-access flag covers one setting, and the scanners check several. My config has to state each one.
+- The gate did its job twice. Each time it stopped my insecure config in CI, and I changed the code or wrote down why I accepted the risk.
+- Switching scanners surfaced four findings on a resource I thought had passed. A clean scan tells me what the scanner checks, and nothing about what it skips.
+- Some fixes carry a deployment cost. Infrastructure encryption forced a delete-and-recreate that failed halfway. The plan showed the `-/+` before I approved it, and that line is the one to read.
 - Purge protection is permanent once enabled. After I delete this vault, Azure reserves its name for the retention period, and I can't reuse it until that ends.

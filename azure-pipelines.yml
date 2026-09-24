@@ -1,101 +1,66 @@
 trigger:
-- main
+  - main
 
 pool:
-  vmImage: 'ubuntu-latest'
+  vmImage: "ubuntu-latest"
 
 stages:
-- stage: Validate
-  displayName: 'Validate Terraform'
-  jobs:
-  - job: TerraformValidate
-    displayName: 'terraform fmt & validate'
-    steps:
-    - script: |
-        mkdir -p tf-install && cd tf-install
-        rm -f terraform terraform.zip
-        TF_VERSION=1.9.8
-        curl -o terraform.zip https://releases.hashicorp.com/terraform/${TF_VERSION}/terraform_${TF_VERSION}_linux_amd64.zip
-        unzip -o terraform.zip
-        sudo mv terraform /usr/local/bin/
-        cd ..
-        terraform -version
-      displayName: 'Install Terraform'
-    - script: terraform fmt -check -diff
-      displayName: 'Terraform Format Check'
-      workingDirectory: terraform
-    - script: terraform init -backend=false
-      displayName: 'Terraform Init'
-      workingDirectory: terraform
-    - script: terraform validate
-      displayName: 'Terraform Validate'
-      workingDirectory: terraform
-- stage: SecurityScan
-  displayName: 'Security Scan'
-  dependsOn: Validate
-  jobs:
-  - job: TfsecScan
-    displayName: 'Security Scan'
-    steps:
-    - script: |
-        # ponytail: curl|bash with no version pin or checksum, trusts the install
-        # script's content at run time. Fine for a personal project; pin an exact
-        # tfsec release + verify a checksum before using this in production.
-        curl -s https://raw.githubusercontent.com/aquasecurity/tfsec/master/scripts/install_linux.sh | bash
-        tfsec terraform/
-      displayName: 'Run tfsec'
-- stage: Plan
-  displayName: 'Terraform Plan'
-  dependsOn: 'SecurityScan'
-  jobs:
-  - job: TerraformPlan
-    displayName: 'terraform plan'
-    steps:
-    - task: AzureCLI@2
-      displayName: 'Terraform Init & Plan'
-      inputs:
-        azureSubscription: 'azure-landing-zone-connection'
-        scriptType: bash
-        scriptLocation: inlineScript
-        addSpnToEnvironment: true
-        inlineScript: |
-          mkdir -p tf-install && cd tf-install
-          curl -o terraform.zip https://releases.hashicorp.com/terraform/1.9.8/terraform_1.9.8_linux_amd64.zip
-          unzip -o terraform.zip
-          sudo mv terraform /usr/local/bin/
-          cd ../terraform
-
-          export ARM_CLIENT_ID=$servicePrincipalId
-          export ARM_TENANT_ID=$tenantId
-          export ARM_SUBSCRIPTION_ID=$(az account show --query id -o tsv)
-          export ARM_USE_OIDC=true
-          export ARM_OIDC_TOKEN=$idToken
-
-          terraform init \
-            -backend-config="resource_group_name=rg-tfstate" \
-            -backend-config="storage_account_name=tfstatecg21836" \
-            -backend-config="container_name=tfstate" \
-            -backend-config="key=landingzone.tfstate" \
-            -backend-config="use_azuread_auth=true"
-          terraform plan -out=tfplan
-    - publish: terraform/tfplan
-      artifact: tfplan
-- stage: Apply
-  displayName: 'Terraform Apply'
-  dependsOn: Plan
-  jobs:
-  - deployment: TerraformApply
-    displayName: 'terraform apply'
-    environment: 'production'
-    strategy:
-      runOnce:
-        deploy:
-          steps:
-          - checkout: self
+  - stage: Validate
+    displayName: "Validate Terraform"
+    jobs:
+      - job: TerraformValidate
+        displayName: "terraform fmt & validate"
+        steps:
+          - script: |
+              mkdir -p tf-install && cd tf-install
+              rm -f terraform terraform.zip
+              TF_VERSION=1.9.8
+              curl -o terraform.zip https://releases.hashicorp.com/terraform/${TF_VERSION}/terraform_${TF_VERSION}_linux_amd64.zip
+              unzip -o terraform.zip
+              sudo mv terraform /usr/local/bin/
+              cd ..
+              terraform -version
+            displayName: "Install Terraform"
+          - script: terraform fmt -check -diff
+            displayName: "Terraform Format Check"
+            workingDirectory: terraform
+          - script: terraform init -backend=false
+            displayName: "Terraform Init"
+            workingDirectory: terraform
+          - script: terraform validate
+            displayName: "Terraform Validate"
+            workingDirectory: terraform
+  - stage: SecurityScan
+    displayName: "Security Scan"
+    dependsOn: Validate
+    jobs:
+      - job: TfsecScan
+        displayName: "Security Scan"
+        steps:
+          - script: |
+              set -euo pipefail
+              mkdir -p trivy-install && cd trivy-install
+              TRIVY_VERSION=0.74.0
+              BASE_URL=https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}
+              curl -sLO ${BASE_URL}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz
+              curl -sLO ${BASE_URL}/trivy_${TRIVY_VERSION}_checksums.txt
+              grep "Linux-64bit.tar.gz$" trivy_${TRIVY_VERSION}_checksums.txt | sha256sum -c -
+              tar -xzf trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz trivy
+              sudo mv trivy /usr/local/bin/
+              cd ..
+              trivy config --exit-code 1 terraform/
+            displayName: "Run Trivy"
+  - stage: Plan
+    displayName: "Terraform Plan"
+    dependsOn: "SecurityScan"
+    jobs:
+      - job: TerraformPlan
+        displayName: "terraform plan"
+        steps:
           - task: AzureCLI@2
-            displayName: 'Terraform Apply'
+            displayName: "Terraform Init & Plan"
             inputs:
-              azureSubscription: 'azure-landing-zone-connection'
+              azureSubscription: "azure-landing-zone-connection"
               scriptType: bash
               scriptLocation: inlineScript
               addSpnToEnvironment: true
@@ -104,7 +69,7 @@ stages:
                 curl -o terraform.zip https://releases.hashicorp.com/terraform/1.9.8/terraform_1.9.8_linux_amd64.zip
                 unzip -o terraform.zip
                 sudo mv terraform /usr/local/bin/
-                cd $(Build.SourcesDirectory)/terraform
+                cd ../terraform
 
                 export ARM_CLIENT_ID=$servicePrincipalId
                 export ARM_TENANT_ID=$tenantId
@@ -118,5 +83,46 @@ stages:
                   -backend-config="container_name=tfstate" \
                   -backend-config="key=landingzone.tfstate" \
                   -backend-config="use_azuread_auth=true"
+                terraform plan -out=tfplan
+          - publish: terraform/tfplan
+            artifact: tfplan
+  - stage: Apply
+    displayName: "Terraform Apply"
+    dependsOn: Plan
+    jobs:
+      - deployment: TerraformApply
+        displayName: "terraform apply"
+        environment: "production"
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                - task: AzureCLI@2
+                  displayName: "Terraform Apply"
+                  inputs:
+                    azureSubscription: "azure-landing-zone-connection"
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    addSpnToEnvironment: true
+                    inlineScript: |
+                      mkdir -p tf-install && cd tf-install
+                      curl -o terraform.zip https://releases.hashicorp.com/terraform/1.9.8/terraform_1.9.8_linux_amd64.zip
+                      unzip -o terraform.zip
+                      sudo mv terraform /usr/local/bin/
+                      cd $(Build.SourcesDirectory)/terraform
 
-                terraform apply -auto-approve $(Pipeline.Workspace)/tfplan/tfplan
+                      export ARM_CLIENT_ID=$servicePrincipalId
+                      export ARM_TENANT_ID=$tenantId
+                      export ARM_SUBSCRIPTION_ID=$(az account show --query id -o tsv)
+                      export ARM_USE_OIDC=true
+                      export ARM_OIDC_TOKEN=$idToken
+
+                      terraform init \
+                        -backend-config="resource_group_name=rg-tfstate" \
+                        -backend-config="storage_account_name=tfstatecg21836" \
+                        -backend-config="container_name=tfstate" \
+                        -backend-config="key=landingzone.tfstate" \
+                        -backend-config="use_azuread_auth=true"
+
+                      terraform apply -auto-approve $(Pipeline.Workspace)/tfplan/tfplan

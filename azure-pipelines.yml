@@ -1,5 +1,9 @@
 trigger:
   - main
+pr:
+  branches:
+    include:
+      - main
 
 pool:
   vmImage: "ubuntu-latest"
@@ -90,6 +94,7 @@ stages:
   - stage: Apply
     displayName: "Terraform Apply"
     dependsOn: Plan
+    condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'))
     jobs:
       - deployment: TerraformApply
         displayName: "terraform apply"

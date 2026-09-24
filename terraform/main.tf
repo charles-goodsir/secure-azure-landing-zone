@@ -40,16 +40,25 @@ resource "azurerm_subnet_network_security_group_association" "main" {
   subnet_id                 = azurerm_subnet.main.id
   network_security_group_id = azurerm_network_security_group.main.id
 }
-
+# AZU-0058: LRS is enough for a PoC holding no data; GRS doubles the cost for durability, not security.
+# AZU-0057: needs diagnostic settings to Log Analytics (roadmap item 6); queue-only analytics logging would log nothing.
+#trivy:ignore:AZU-0058
+#trivy:ignore:AZU-0057
 resource "azurerm_storage_account" "main" {
-  name                          = "salzstcg314214"
-  resource_group_name           = azurerm_resource_group.main.name
-  location                      = azurerm_resource_group.main.location
-  account_tier                  = "Standard"
-  account_replication_type      = "LRS"
-  min_tls_version               = "TLS1_2"
-  https_traffic_only_enabled    = true
-  public_network_access_enabled = false
+  name                              = "salzstcg314214"
+  resource_group_name               = azurerm_resource_group.main.name
+  location                          = azurerm_resource_group.main.location
+  account_tier                      = "Standard"
+  account_replication_type          = "LRS"
+  min_tls_version                   = "TLS1_2"
+  https_traffic_only_enabled        = true
+  public_network_access_enabled     = false
+  infrastructure_encryption_enabled = true
+  network_rules {
+    default_action = "Deny"
+    bypass         = ["AzureServices"]
+  }
+
 }
 
 data "azurerm_client_config" "current" {}

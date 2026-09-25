@@ -149,3 +149,22 @@ resource "azurerm_private_dns_zone_virtual_network_link" "key_vault" {
   private_dns_zone_name = azurerm_private_dns_zone.key_vault.name
   virtual_network_id    = azurerm_virtual_network.main.id
 }
+
+resource "azurerm_private_endpoint" "blob" {
+  name                = "salz-pe-blob"
+  location            = azurerm_resource_group.main.location
+  resource_group_name = azurerm_resource_group.main.name
+  subnet_id           = azurerm_subnet.private_endpoints.id
+
+  private_service_connection {
+    name                           = "blob-connection"
+    private_connection_resource_id = azurerm_storage_account.main.id
+    subresource_names              = ["blob"]
+    is_manual_connection           = false
+  }
+
+  private_dns_zone_group {
+    name                 = "blob-dns"
+    private_dns_zone_ids = [azurerm_private_dns_zone.blob.id]
+  }
+}

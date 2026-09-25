@@ -4,7 +4,7 @@ I defined a small Azure environment in Terraform and deploy it through an Azure 
 
 > I built a Terraform-defined Azure environment that deploys through Azure Pipelines. Security
 > scanning caught six misconfigurations in my own Key Vault and storage configs and blocked each
-> deployment. I fixed four, accepted two with written reasons, and documented the before and
+> deployment. I fixed five, accepted one with a written reason, and documented the before and
 > after, applying the fix-and-verify habit from my AppSec homelab to infrastructure.
 
 ![Full pipeline passing](screenshots/SALZ12.webp)
@@ -39,6 +39,9 @@ flowchart LR
             NSG[NSG<br/>deny by default] --- SN
             ST[Storage account<br/>TLS 1.2 · HTTPS only · no public access · network rules deny]
             KV[Key Vault<br/>RBAC · purge protection · network ACL deny]
+            LAW[(Log Analytics<br/>salz-law)]
+            KV -. AuditEvent .-> LAW
+            ST -. blob logs .-> LAW
         end
     end
 
@@ -55,6 +58,7 @@ flowchart LR
 | Network security group | No allow rules, so Azure's implicit deny applies. Attached to the subnet |
 | Storage account | Minimum TLS 1.2, HTTPS only, public network access disabled, network rules default `Deny`, infrastructure encryption |
 | Key Vault | RBAC authorization, purge protection, 7-day soft delete, network ACL default `Deny` |
+| Log Analytics workspace `salz-law` | 30-day retention. Receives the Key Vault's `AuditEvent` log and the blob service's read, write and delete logs through two diagnostic settings |
 
 Terraform keeps its state in a separate resource group, `rg-tfstate`. I created that storage once by hand with `az cli`, since Terraform needs somewhere to write state before it can manage anything. The separation also protects the state: running `terraform destroy` on the landing zone can't delete it.
 
@@ -135,7 +139,7 @@ The same step after the fix:
 
 I left these in on purpose:
 
-- **Two accepted Trivy findings:** GRS replication and storage analytics logging. [misconfiguration-findings.md](misconfiguration-findings.md) gives the reason for each. The logging acceptance expires on 31 Dec 2026, after which Trivy fails the pipeline again.
+- **Two suppressed Trivy findings:** I accepted GRS replication as a cost and durability decision. Storage logging is in place through diagnostic settings, but the AZU-0057 rule only recognises the legacy setting, so it stays suppressed with a reason that names the resource providing the logs. [misconfiguration-findings.md](misconfiguration-findings.md) covers both.
 - **No second reviewer:** the ruleset requires 0 approvals, because GitHub won't let me approve my own PR. The passing pipeline check acts as the reviewer. A team repo would require at least one approval from someone other than the author.
 - **Unpinned Trivy rules:** the Trivy binary is pinned, but it downloads its checks bundle fresh on each run. The same code can pass one day and fail the next. I accept that so new rules reach me without a pipeline change.
 - **Trust on first download:** the lock file proves the provider hasn't changed since I locked it. Terraform checked HashiCorp's signature on that first download, but the hashes record what the registry served that day.

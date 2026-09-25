@@ -1,0 +1,14 @@
+steps:
+  - script: |
+      set -euo pipefail
+      TF_VERSION=1.9.8
+      BASE_URL=https://releases.hashicorp.com/terraform/${TF_VERSION}
+      mkdir -p tf-install && cd tf-install
+      curl -fsSLO ${BASE_URL}/terraform_${TF_VERSION}_linux_amd64.zip
+      curl -fsSLO ${BASE_URL}/terraform_${TF_VERSION}_SHA256SUMS
+      grep "linux_amd64.zip$" terraform_${TF_VERSION}_SHA256SUMS | sha256sum -c -
+      unzip -o terraform_${TF_VERSION}_linux_amd64.zip terraform
+      sudo mv terraform /usr/local/bin/
+      cd ..
+      terraform -version
+    displayName: "Install Terraform (Verified)"

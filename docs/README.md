@@ -13,7 +13,7 @@ I defined a small Azure environment in Terraform and deploy it through an Azure 
 
 - **Infrastructure as Code:** Terraform defines each Azure resource. I don't create anything by clicking in the Portal.
 - **Shift-left security:** Trivy runs before `plan`. An insecure config fails the pipeline while it's still code.
-- **Supply-chain checks:** the pipeline downloads a pinned Trivy release and verifies its SHA-256 checksum before running it. A committed `.terraform.lock.hcl` pins the azurerm provider version and hashes, and each `terraform init` runs with `-lockfile=readonly`, so a provider that doesn't match fails the pipeline.
+- **Supply-chain checks:** the pipeline downloads pinned Terraform and Trivy releases and verifies each SHA-256 checksum before running them. A committed `.terraform.lock.hcl` pins the azurerm provider version and hashes, and each `terraform init` runs with `-lockfile=readonly`, so a provider that doesn't match fails the pipeline.
 - **Change control:** a GitHub ruleset blocks direct pushes to `main`, so each change arrives through a pull request that has passed the pipeline. The Plan stage publishes the saved plan as an artifact, a manual approval gate sits in front of `apply`, and Apply runs the plan I approved without re-planning.
 - **No stored secrets:** the pipeline signs in to Azure with workload identity federation (OIDC), so I have no client secret to leak.
 
@@ -76,6 +76,8 @@ Two settings keep a PR from deploying or misusing credentials:
 ### 1. Validate
 The stage installs Terraform 1.9.8 and runs `terraform fmt -check`, `terraform init -backend=false` and `terraform validate`. It catches mistakes in seconds and needs no Azure credentials.
 
+Validate, Plan and Apply each install Terraform through one step template, [`templates/install-terraform.yml`](../templates/install-terraform.yml). It downloads the release with HashiCorp's `SHA256SUMS` file and verifies the zip under `set -euo pipefail` before installing. I built it after finding the install copied into three stages that had already drifted apart: one used a version variable, two hardcoded the version in the URL. A version bump is now one edit.
+
 ![Validate stage passing](screenshots/SALZ5.webp)
 
 ### 2. Security Scan
@@ -137,7 +139,6 @@ I left these in on purpose:
 - **No second reviewer:** the ruleset requires 0 approvals, because GitHub won't let me approve my own PR. The passing pipeline check acts as the reviewer. A team repo would require at least one approval from someone other than the author.
 - **Unpinned Trivy rules:** the Trivy binary is pinned, but it downloads its checks bundle fresh on each run. The same code can pass one day and fail the next. I accept that so new rules reach me without a pipeline change.
 - **Trust on first download:** the lock file proves the provider hasn't changed since I locked it. Terraform checked HashiCorp's signature on that first download, but the hashes record what the registry served that day.
-- **Checksums from the same source:** the Trivy checksum file comes from the same GitHub release as the binary. It catches a corrupted or swapped download, but an attacker who controls the release could replace both files. Verifying Trivy's cosign signature would close that gap.
-- **Unverified Terraform downloads:** the Terraform installs are pinned to 1.9.8 but skip checksum verification.
+- **Checksums from the same source:** each checksum file comes from the same place as its binary: Trivy's GitHub release and HashiCorp's release server. They catch a corrupted or swapped download, but an attacker who controls a release could replace both files. Verifying the signatures would close that gap: cosign for Trivy, and HashiCorp's GPG signature on `SHA256SUMS`.
 - **Hardcoded values:** I wrote names and the region straight into `main.tf` instead of using variables.
 - **No private endpoints:** with public access disabled and no private endpoint, only Azure's trusted services can reach the storage account and Key Vault.

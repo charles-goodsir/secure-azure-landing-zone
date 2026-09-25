@@ -48,6 +48,18 @@ resource "azurerm_subnet_network_security_group_association" "main" {
   subnet_id                 = azurerm_subnet.main.id
   network_security_group_id = azurerm_network_security_group.main.id
 }
+resource "azurerm_subnet" "private_endpoints" {
+  name                 = "salz-pe-subnet"
+  resource_group_name  = azurerm_resource_group.main.name
+  virtual_network_name = azurerm_virtual_network.main.name
+  address_prefixes     = ["10.0.2.0/24"]
+}
+
+resource "azurerm_subnet_network_security_group_association" "private_endpoints" {
+  subnet_id                 = azurerm_subnet.private_endpoints.id
+  network_security_group_id = azurerm_network_security_group.main.id
+}
+
 # AZU-0058: LRS is enough for a PoC holding no data; GRS doubles the cost for durability, not security.
 # AZU-0057: blob logs go to Log Analytics via azurerm_monitor_diagnostic_setting.storage_blob; this check only recognises legacy Storage Analytics logging.
 #trivy:ignore:AZU-0058

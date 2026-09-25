@@ -20,16 +20,7 @@ stages:
       - job: TerraformValidate
         displayName: "terraform fmt & validate"
         steps:
-          - script: |
-              mkdir -p tf-install && cd tf-install
-              rm -f terraform terraform.zip
-              TF_VERSION=1.9.8
-              curl -o terraform.zip https://releases.hashicorp.com/terraform/${TF_VERSION}/terraform_${TF_VERSION}_linux_amd64.zip
-              unzip -o terraform.zip
-              sudo mv terraform /usr/local/bin/
-              cd ..
-              terraform -version
-            displayName: "Install Terraform"
+          - template: templates/install-terraform.yml
           - script: terraform fmt -check -diff
             displayName: "Terraform Format Check"
             workingDirectory: terraform
@@ -66,6 +57,7 @@ stages:
       - job: TerraformPlan
         displayName: "terraform plan"
         steps:
+          - template: templates/install-terraform.yml
           - task: AzureCLI@2
             displayName: "Terraform Init & Plan"
             inputs:
@@ -74,11 +66,7 @@ stages:
               scriptLocation: inlineScript
               addSpnToEnvironment: true
               inlineScript: |
-                mkdir -p tf-install && cd tf-install
-                curl -o terraform.zip https://releases.hashicorp.com/terraform/1.9.8/terraform_1.9.8_linux_amd64.zip
-                unzip -o terraform.zip
-                sudo mv terraform /usr/local/bin/
-                cd ../terraform
+                cd terraform
 
                 export ARM_CLIENT_ID=$servicePrincipalId
                 export ARM_TENANT_ID=$tenantId
@@ -109,6 +97,7 @@ stages:
             deploy:
               steps:
                 - checkout: self
+                - template: templates/install-terraform.yml
                 - task: AzureCLI@2
                   displayName: "Terraform Apply"
                   inputs:
@@ -117,10 +106,7 @@ stages:
                     scriptLocation: inlineScript
                     addSpnToEnvironment: true
                     inlineScript: |
-                      mkdir -p tf-install && cd tf-install
-                      curl -o terraform.zip https://releases.hashicorp.com/terraform/1.9.8/terraform_1.9.8_linux_amd64.zip
-                      unzip -o terraform.zip
-                      sudo mv terraform /usr/local/bin/
+
                       cd $(Build.SourcesDirectory)/terraform
 
                       export ARM_CLIENT_ID=$servicePrincipalId

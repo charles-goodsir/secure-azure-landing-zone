@@ -53,7 +53,6 @@ resource "azurerm_subnet_network_security_group_association" "main" {
 #trivy:ignore:AZU-0058
 #trivy:ignore:AZU-0057
 resource "azurerm_storage_account" "main" {
-resource "azurerm_storage_account" "main" {
   name                              = "salzstcg314215"
   resource_group_name               = azurerm_resource_group.main.name
   location                          = azurerm_resource_group.main.location

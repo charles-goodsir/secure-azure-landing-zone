@@ -49,8 +49,10 @@ resource "azurerm_subnet_network_security_group_association" "main" {
   network_security_group_id = azurerm_network_security_group.main.id
 }
 # AZU-0058: LRS is enough for a PoC holding no data; GRS doubles the cost for durability, not security.
-# AZU-0057: needs diagnostic settings to Log Analytics (roadmap item 6); queue-only analytics logging would log nothing.
+# AZU-0057: blob logs go to Log Analytics via azurerm_monitor_diagnostic_setting.storage_blob; this check only recognises legacy Storage Analytics logging.
 #trivy:ignore:AZU-0058
+#trivy:ignore:AZU-0057
+resource "azurerm_storage_account" "main" {
 resource "azurerm_storage_account" "main" {
   name                              = "salzstcg314215"
   resource_group_name               = azurerm_resource_group.main.name

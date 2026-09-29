@@ -106,6 +106,10 @@ resource "azurerm_monitor_diagnostic_setting" "key_vault" {
   enabled_log {
     category = "AuditEvent"
   }
+  metric {
+    category = "AllMetrics"
+    enabled  = false
+  }
 }
 
 resource "azurerm_monitor_diagnostic_setting" "storage_blob" {
@@ -123,6 +127,15 @@ resource "azurerm_monitor_diagnostic_setting" "storage_blob" {
 
   enabled_log {
     category = "StorageDelete"
+  }
+  metric {
+    category = "Capacity"
+    enabled  = false
+  }
+
+  metric {
+    category = "Transaction"
+    enabled  = false
   }
 }
 

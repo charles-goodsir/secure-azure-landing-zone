@@ -181,3 +181,21 @@ resource "azurerm_private_endpoint" "blob" {
     private_dns_zone_ids = [azurerm_private_dns_zone.blob.id]
   }
 }
+resource "azurerm_private_endpoint" "key_vault" {
+  name                = "salz-pe-kv"
+  location            = azurerm_resource_group.main.location
+  resource_group_name = azurerm_resource_group.main.name
+  subnet_id           = azurerm_subnet.private_endpoints.id
+
+  private_service_connection {
+    name                           = "kv-connection"
+    private_connection_resource_id = azurerm_key_vault.main.id
+    subresource_names              = ["vault"]
+    is_manual_connection           = false
+  }
+
+  private_dns_zone_group {
+    name                 = "kv-dns"
+    private_dns_zone_ids = [azurerm_private_dns_zone.key_vault.id]
+  }
+}

@@ -7,6 +7,8 @@ I defined a small Azure environment in Terraform and deploy it through an Azure 
 > deployment. I fixed five, accepted one with a written reason, and documented the before and
 > after, applying the fix-and-verify habit from my AppSec homelab to infrastructure.
 
+**Environment status:** the project is complete, and I tore the environment down on 1 October 2026 to avoid ongoing cost. Both pipelines are disabled and `salz-rg` is deleted. I kept the remote state in `rg-tfstate`, so re-enabling the main pipeline and approving one Apply rebuilds everything in a few minutes. The screenshots below are from when it was live.
+
 ![Full pipeline passing](screenshots/SALZ12.webp)
 
 ## What this demonstrates

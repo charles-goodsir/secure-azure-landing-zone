@@ -109,6 +109,8 @@ I started with tfsec and switched to Trivy after tfsec's own logs announced it w
 ### 3. Plan
 The stage signs in through the service connection, connects to the remote backend and runs `terraform plan -out=tfplan`. It publishes the plan file as a pipeline artifact for Apply to use.
 
+Plan, Apply and the drift check share one sign-in step template, [`templates/terraform-azure.yml`](../templates/terraform-azure.yml). It exports the `ARM_*` variables, runs `terraform init` against the remote backend, then runs the command each caller passes in. The template runs everything as one task, because the OIDC token only exists inside the task that requested it.
+
 ![Plan stage publishing the tfplan artifact](screenshots/SALZ9.webp)
 
 ### 4. Manual approval
@@ -169,4 +171,3 @@ I left these in on purpose:
 - **Private path verified from outside:** I confirmed both endpoints are approved and each zone holds the right A record. I didn't run a VM inside the VNet to resolve and connect end to end, since it would cost money for little extra proof.
 - **NSG doesn't filter endpoint traffic:** private endpoint network policies are off on the endpoint subnet, so its NSG association is there for consistency and doesn't enforce rules on endpoint traffic yet.
 - **Weekly drift check:** drift could go unnoticed for up to a week. A shared environment would check nightly and alert someone.
-- **Repeated sign-in block:** the `ARM_*` exports and `terraform init` appear in Plan, Apply and the drift pipeline. A shared template would remove the copies, as it did for the Terraform install.

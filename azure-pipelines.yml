@@ -58,30 +58,10 @@ stages:
         displayName: "terraform plan"
         steps:
           - template: templates/install-terraform.yml
-          - task: AzureCLI@2
-            displayName: "Terraform Init & Plan"
-            inputs:
-              azureSubscription: "azure-landing-zone-connection"
-              scriptType: bash
-              scriptLocation: inlineScript
-              addSpnToEnvironment: true
-              inlineScript: |
-                cd terraform
-
-                export ARM_CLIENT_ID=$servicePrincipalId
-                export ARM_TENANT_ID=$tenantId
-                export ARM_SUBSCRIPTION_ID=$(az account show --query id -o tsv)
-                export ARM_USE_OIDC=true
-                export ARM_OIDC_TOKEN=$idToken
-
-                terraform init \
-                  -backend-config="resource_group_name=rg-tfstate" \
-                  -backend-config="storage_account_name=tfstatecg21836" \
-                  -backend-config="container_name=tfstate" \
-                  -backend-config="key=landingzone.tfstate" \
-                  -backend-config="use_azuread_auth=true" \
-                  -lockfile=readonly
-                terraform plan -out=tfplan
+          - template: templates/terraform-azure.yml
+            parameters:
+              displayName: "Terraform Init & Plan"
+              command: terraform plan -out=tfplan
           - publish: terraform/tfplan
             artifact: tfplan
   - stage: Apply
@@ -98,29 +78,7 @@ stages:
               steps:
                 - checkout: self
                 - template: templates/install-terraform.yml
-                - task: AzureCLI@2
-                  displayName: "Terraform Apply"
-                  inputs:
-                    azureSubscription: "azure-landing-zone-connection"
-                    scriptType: bash
-                    scriptLocation: inlineScript
-                    addSpnToEnvironment: true
-                    inlineScript: |
-
-                      cd $(Build.SourcesDirectory)/terraform
-
-                      export ARM_CLIENT_ID=$servicePrincipalId
-                      export ARM_TENANT_ID=$tenantId
-                      export ARM_SUBSCRIPTION_ID=$(az account show --query id -o tsv)
-                      export ARM_USE_OIDC=true
-                      export ARM_OIDC_TOKEN=$idToken
-
-                      terraform init \
-                        -backend-config="resource_group_name=rg-tfstate" \
-                        -backend-config="storage_account_name=tfstatecg21836" \
-                        -backend-config="container_name=tfstate" \
-                        -backend-config="key=landingzone.tfstate" \
-                        -backend-config="use_azuread_auth=true" \
-                        -lockfile=readonly
-
-                      terraform apply -auto-approve $(Pipeline.Workspace)/tfplan/tfplan
+                - template: templates/terraform-azure.yml
+                  parameters:
+                    displayName: "Terraform Apply"
+                    command: terraform apply -auto-approve $(Pipeline.Workspace)/tfplan/tfplan

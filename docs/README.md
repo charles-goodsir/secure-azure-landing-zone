@@ -16,6 +16,8 @@ I defined a small Azure environment in Terraform and deploy it through an Azure 
 - **Supply-chain checks:** the pipeline downloads pinned Terraform and Trivy releases and verifies each SHA-256 checksum before running them. A committed `.terraform.lock.hcl` pins the azurerm provider version and hashes, and each `terraform init` runs with `-lockfile=readonly`, so a provider that doesn't match fails the pipeline.
 - **Change control:** a GitHub ruleset blocks direct pushes to `main`, so each change arrives through a pull request that has passed the pipeline. The Plan stage publishes the saved plan as an artifact, a manual approval gate sits in front of `apply`, and Apply runs the plan I approved without re-planning.
 - **No stored secrets:** the pipeline signs in to Azure with workload identity federation (OIDC), so I have no client secret to leak.
+- **Network isolation:** the storage account and Key Vault refuse public network access. Private endpoints in a dedicated subnet, with private DNS zones, give the VNet a private route to each one.
+- **Drift detection:** a separate pipeline plans against the live environment every week and fails if Azure no longer matches the code.
 
 ## Architecture
 
@@ -23,22 +25,31 @@ I defined a small Azure environment in Terraform and deploy it through an Azure 
 flowchart LR
     GH[GitHub repo<br/>PR or merge to main] --> V
 
-    subgraph ADO[Azure DevOps pipeline]
+    subgraph ADO[Azure DevOps]
         V[1. Validate<br/>fmt · init · validate] --> S[2. Security Scan<br/>Trivy]
         S --> P[3. Plan<br/>tfplan artifact]
         P -- main only --> A{4. Manual<br/>approval}
         A --> AP[5. Apply<br/>saved plan]
+        D[Weekly drift check<br/>plan -detailed-exitcode]
     end
 
     AP -- OIDC service connection --> RG
+    D -. read-only plan .-> RG
 
     subgraph Azure
         TS[(rg-tfstate<br/>remote state)]
         subgraph RG[salz-rg]
-            VNET[VNet 10.0.0.0/16] --> SN[Subnet 10.0.1.0/24]
+            subgraph VNET[VNet 10.0.0.0/16]
+                SN[Subnet 10.0.1.0/24]
+                PESN[Endpoint subnet 10.0.2.0/24]
+            end
             NSG[NSG<br/>deny by default] --- SN
-            ST[Storage account<br/>TLS 1.2 · HTTPS only · no public access · network rules deny]
-            KV[Key Vault<br/>RBAC · purge protection · network ACL deny]
+            NSG --- PESN
+            PEB[Private endpoint<br/>blob · 10.0.2.4] --- PESN
+            PEK[Private endpoint<br/>vault · 10.0.2.5] --- PESN
+            PEB --> ST[Storage account<br/>TLS 1.2 · HTTPS only · no public access · network rules deny]
+            PEK --> KV[Key Vault<br/>RBAC · purge protection · network ACL deny]
+            DNS[Private DNS zones<br/>privatelink.blob · privatelink.vaultcore] -. linked .- VNET
             LAW[(Log Analytics<br/>salz-law)]
             KV -. AuditEvent .-> LAW
             ST -. blob logs .-> LAW
@@ -54,10 +65,12 @@ flowchart LR
 | Resource | Security settings |
 |---|---|
 | Resource group `salz-rg` | Holds the resources below. It sits apart from the state storage |
-| Virtual network + subnet | Private address space `10.0.0.0/16`, subnet `10.0.1.0/24` |
-| Network security group | No allow rules, so Azure's implicit deny applies. Attached to the subnet |
+| Virtual network + subnets | Private address space `10.0.0.0/16`. Workload subnet `10.0.1.0/24`, private endpoint subnet `10.0.2.0/24` |
+| Network security group | No allow rules, so Azure's implicit deny applies. Attached to both subnets |
 | Storage account | Minimum TLS 1.2, HTTPS only, public network access disabled, network rules default `Deny`, infrastructure encryption |
 | Key Vault | RBAC authorization, purge protection, 7-day soft delete, network ACL default `Deny` |
+| Private endpoints `salz-pe-blob`, `salz-pe-kv` | One for the blob service (`10.0.2.4`), one for the Key Vault (`10.0.2.5`). Each connects automatically and registers its own DNS record |
+| Private DNS zones | `privatelink.blob.core.windows.net` and `privatelink.vaultcore.azure.net`, linked to the VNet, so the normal hostnames resolve to the private IPs from inside it |
 | Log Analytics workspace `salz-law` | 30-day retention. Receives the Key Vault's `AuditEvent` log and the blob service's read, write and delete logs through two diagnostic settings |
 
 Terraform keeps its state in a separate resource group, `rg-tfstate`. I created that storage once by hand with `az cli`, since Terraform needs somewhere to write state before it can manage anything. The separation also protects the state: running `terraform destroy` on the landing zone can't delete it.
@@ -112,6 +125,11 @@ The activity log for `salz-rg` shows the deployment. The `'audit'` entries come 
 
 ![salz-rg activity log](screenshots/SALZ13.webp)
 
+### Weekly drift check
+A second pipeline, [`drift-detection.yml`](../drift-detection.yml), runs `terraform plan -detailed-exitcode` against the live environment at 3am every Monday (AEST). The exit code tells me whether Azure still matches the code: 0 means no changes, 2 means something changed outside Terraform, and the run fails with a "Drift detected" message.
+
+It only plans, so it never waits at the approval gate or changes anything. `always: true` keeps it running even when nothing has been committed, since drift happens in Azure, not in git. I tested it by adding a tag to `salz-rg` in the Portal: the run went red with a plan to remove the tag, then green again once I'd removed it.
+
 ## Problems I hit and how I fixed them
 
 Most stages failed at least once before they worked.
@@ -126,6 +144,9 @@ Most stages failed at least once before they worked.
 | The Trivy checksum check blocked nothing | Bash keeps running after a failed command, so a tampered download would print `FAILED` and then install and run anyway | I added `set -euo pipefail` as the script's first line |
 | Apply condition that would have passed on PRs | I wrote `variables['Build Reason']` with a space instead of a dot. The lookup returns an empty string, which never equals `'PullRequest'`, so the condition stays true and Apply would run on every PR | I corrected it to `Build.Reason` and confirmed Apply shows as skipped on a PR run |
 | `StorageAccountAlreadyTaken` during Apply | Enabling infrastructure encryption forces a replace. Terraform deleted the account and asked for the same globally unique name 6 seconds later, before Azure had released it | The account held no data, so I renamed it and ran a fresh plan. On a real account I'd plan this change as a migration |
+| Every plan showed 2 changes nobody made | Azure records each metric category on a diagnostic setting, switched off. My code didn't mention them, so every plan tried to remove them, and Azure kept reporting them | I declared the disabled `metric` blocks in code. The next plan said No changes |
+| A commit pushed straight at `main` | I branched with `git switch -c <name> origin/main`, which sets `main` as the upstream, so VS Code pushed there | The ruleset rejected it twice. I pushed the branch under its own name and opened a PR |
+| Two schedule typos that would have passed the PR | A four-field cron and `includes:` instead of `include:`. The PR runs `azure-pipelines.yml`, not the drift pipeline's file | I caught both in review before committing. ADO only reads that file once the pipeline is registered |
 
 The first problem, with the install step stuck on the prompt:
 
@@ -145,4 +166,7 @@ I left these in on purpose:
 - **Trust on first download:** the lock file proves the provider hasn't changed since I locked it. Terraform checked HashiCorp's signature on that first download, but the hashes record what the registry served that day.
 - **Checksums from the same source:** each checksum file comes from the same place as its binary: Trivy's GitHub release and HashiCorp's release server. They catch a corrupted or swapped download, but an attacker who controls a release could replace both files. Verifying the signatures would close that gap: cosign for Trivy, and HashiCorp's GPG signature on `SHA256SUMS`.
 - **Hardcoded values:** I wrote names and the region straight into `main.tf` instead of using variables.
-- **No private endpoints:** with public access disabled and no private endpoint, only Azure's trusted services can reach the storage account and Key Vault.
+- **Private path verified from outside:** I confirmed both endpoints are approved and each zone holds the right A record. I didn't run a VM inside the VNet to resolve and connect end to end, since it would cost money for little extra proof.
+- **NSG doesn't filter endpoint traffic:** private endpoint network policies are off on the endpoint subnet, so its NSG association is there for consistency and doesn't enforce rules on endpoint traffic yet.
+- **Weekly drift check:** drift could go unnoticed for up to a week. A shared environment would check nightly and alert someone.
+- **Repeated sign-in block:** the `ARM_*` exports and `terraform init` appear in Plan, Apply and the drift pipeline. A shared template would remove the copies, as it did for the Terraform install.
